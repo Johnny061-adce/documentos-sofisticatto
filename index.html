@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sofisticatto | Documentos</title>
-<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script type="text/javascript" src="https://gc.kis.v2.scr.kaspersky-labs.com/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js?attr=gm5SjRlPfFtfWaAv2XM2f2UQ4U-3_C21MUUgIraH2xPs7HQQ62lcChJrGszXYt2A8nhVF4tSVDLrSw3pmYHj75jtjx9i7-RuUp2QoXd6fJBhGOMx2ERi9juCPEyQqYb_-AR2HWyBy-kA7KxDrUfncF0i1Y9-eH2xPbG8LB1QHB2FLQdZuumM0WaJTbfcoFehxCcFtjl_2FHSu11VKleO5-SLe-s5H33Y_bQFaXJSnlLXIG_uTn6i4mIYA8uxDFkFmbNg9m30jDbvFbQEM1nACrNA2a0iTBQS6TX5dvSlSr70-J4Zu7MW_uwnxoONeZ72" charset="UTF-8"></script><script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -34,6 +34,10 @@ function fmtSize(bytes){bytes=Number(bytes)||0;if(bytes<1024*1024)return (bytes/
 function escapeHtml(s){return String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}
 function safeName(s){return String(s||'arquivo').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._\-\/ ]/g,'').replace(/\s+/g,'_').replace(/\/+$/,'')}
 function folderFromPath(path){const parts=String(path||'').split('/');parts.pop();return parts.join('/') || 'Sem pasta'}
+function isImageFile(file){const name=(file.name||'').toLowerCase();return (file.type&&file.type.startsWith('image/')) || /\.(jpe?g|png|webp|gif|bmp|tif|tiff|heic|heif)$/i.test(name)}
+function contentTypeFor(file){const n=(file.name||'').toLowerCase();if(file.type)return file.type;if(/\.jpe?g$/i.test(n))return 'image/jpeg';if(/\.png$/i.test(n))return 'image/png';if(/\.webp$/i.test(n))return 'image/webp';if(/\.gif$/i.test(n))return 'image/gif';if(/\.bmp$/i.test(n))return 'image/bmp';if(/\.tiff?$/i.test(n))return 'image/tiff';return 'application/octet-stream'}
+function isBucketError(err){return String(err?.message||err?.error||err||'').toLowerCase().includes('bucket') || String(err?.statusCode||err?.status||'')==='404'}
+async function checkBucket(){try{const testPath='.teste_sistema_sofisticatto.txt';const blob=new Blob(['ok'],{type:'text/plain'});const up=await appSupabase.storage.from(BUCKET).upload(testPath,blob,{upsert:true,contentType:'text/plain'});if(up.error){console.error('Teste do bucket:',up.error);return !isBucketError(up.error)}await appSupabase.storage.from(BUCKET).remove([testPath]);return true}catch(e){console.error('Teste do bucket:',e);return false}}
 
 async function ensureAdmin(){try{const {data,error}=await appSupabase.from('usuarios').select('*').eq('usuario','admin').maybeSingle();if(error){console.warn(error);return}if(!data){await appSupabase.from('usuarios').insert({nome:'Administrador',usuario:'admin',senha:'admin123',role:'admin',ativo:true})}}catch(e){console.warn(e)}}
 async function login(usuario,senha){const {data,error}=await appSupabase.from('usuarios').select('*').eq('usuario',usuario).eq('senha',senha).eq('ativo',true).maybeSingle();if(error)throw error;return data}
@@ -79,7 +83,58 @@ $('userForm').addEventListener('submit',async e=>{e.preventDefault();if(currentU
 async function disableUser(id){if(!confirm('Desativar este usuário?'))return;const {error}=await appSupabase.from('usuarios').update({ativo:false}).eq('id',id);if(error){showToast('Erro ao desativar usuário.');return}await refresh();showToast('Usuário desativado.')}
 
 const input=$('folderInput'), dz=$('dropzone');input.addEventListener('change',e=>importFiles([...e.target.files]));['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('drag')}));['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('drag')}));dz.addEventListener('drop',e=>importFiles([...e.dataTransfer.files]));
-async function importFiles(files){const imgs=files.filter(f=>f.type.startsWith('image/'));if(!imgs.length){showToast('Nenhuma imagem encontrada.');return}const folderName=folderFromPath(imgs[0].webkitRelativePath||imgs[0].name);const {data:pasta,error:pastaErr}=await appSupabase.from('pastas').insert({nome:folderName,descricao:'Importada pelo sistema',criado_por:currentUser.id}).select().single();if(pastaErr){showToast('Erro ao criar pasta.');console.error(pastaErr);return}$('progressBox').classList.remove('hidden');let ok=0;for(let i=0;i<imgs.length;i++){const file=imgs[i];const rel=safeName(file.webkitRelativePath||file.name);const path=`${pasta.id}/${Date.now()}_${i}_${rel}`;$('progressBar').style.width=Math.round((i/imgs.length)*100)+'%';$('progressText').textContent=`Importando ${i+1} de ${imgs.length}...`;const up=await appSupabase.storage.from(BUCKET).upload(path,file,{cacheControl:'3600',upsert:false,contentType:file.type});if(up.error){console.error(up.error);continue}const ins=await appSupabase.from('arquivos').insert({pasta_id:pasta.id,nome_arquivo:file.name,caminho_storage:path,tipo_arquivo:file.type,tamanho_bytes:file.size,importado_por:currentUser.id});if(ins.error){console.error(ins.error);continue}ok++}$('progressBar').style.width='100%';setTimeout(()=>{$('progressBox').classList.add('hidden');$('progressBar').style.width='0%';$('progressText').textContent=''},700);input.value='';await refresh();showToast(`${ok} imagem(ns) importada(s).`)}
+async function importFiles(files){
+  const imgs=files.filter(isImageFile);
+  if(!imgs.length){showToast('Nenhuma imagem JPEG/PNG encontrada nessa pasta.');return}
+
+  const bucketOk=await checkBucket();
+  if(!bucketOk){
+    showToast('Bucket arquivos não encontrado. Crie o bucket no Supabase Storage.');
+    alert('O sistema está conectado, mas o bucket "arquivos" não existe ou está sem permissão no Supabase Storage.\n\nCrie no Supabase: Storage > New bucket > nome: arquivos.\nDeixe como público ou rode as políticas de Storage que te enviei.');
+    return;
+  }
+
+  const folderName=folderFromPath(imgs[0].webkitRelativePath||imgs[0].name);
+  const {data:pasta,error:pastaErr}=await appSupabase.from('pastas').insert({nome:folderName,descricao:'Importada pelo sistema',criado_por:currentUser.id}).select().single();
+  if(pastaErr){showToast('Erro ao criar pasta no banco.');console.error(pastaErr);return}
+
+  $('progressBox').classList.remove('hidden');
+  let ok=0, falhas=0;
+  for(let i=0;i<imgs.length;i++){
+    const file=imgs[i];
+    const rel=safeName(file.webkitRelativePath||file.name);
+    const path=`${pasta.id}/${Date.now()}_${i}_${rel}`;
+    $('progressBar').style.width=Math.round((i/imgs.length)*100)+'%';
+    $('progressText').textContent=`Importando ${i+1} de ${imgs.length}: ${file.name}`;
+
+    const up=await appSupabase.storage.from(BUCKET).upload(path,file,{cacheControl:'3600',upsert:false,contentType:contentTypeFor(file)});
+    if(up.error){
+      console.error('Erro no upload:',file.name,up.error);
+      falhas++;
+      if(isBucketError(up.error)){
+        showToast('Bucket arquivos não encontrado no Supabase.');
+        break;
+      }
+      continue;
+    }
+
+    const ins=await appSupabase.from('arquivos').insert({
+      pasta_id:pasta.id,
+      nome_arquivo:file.name,
+      caminho_storage:path,
+      tipo_arquivo:contentTypeFor(file),
+      tamanho_bytes:file.size,
+      importado_por:currentUser.id
+    });
+    if(ins.error){console.error('Erro ao salvar registro:',file.name,ins.error);falhas++;continue}
+    ok++;
+  }
+  $('progressBar').style.width='100%';
+  setTimeout(()=>{$('progressBox').classList.add('hidden');$('progressBar').style.width='0%';$('progressText').textContent=''},900);
+  input.value='';
+  await refresh();
+  showToast(`${ok} imagem(ns) importada(s). ${falhas?falhas+' falha(s).':''}`);
+}
 async function openImage(id){const f=filesCache.find(x=>x.id===id);if(!f)return;$('modalTitle').textContent=f.nome_arquivo;$('modalImage').src=await previewUrl(f.caminho_storage);$('modal').classList.remove('hidden')}
 function closeModal(){$('modal').classList.add('hidden')}
 function downloadBlob(blob, filename){
@@ -147,7 +202,7 @@ async function downloadOneAs(id,format){
     }else{
       downloadBlob(blob, f.nome_arquivo);
     }
-  }catch(e){showToast(e?.message?.includes('Bucket')?'Bucket arquivos não encontrado no Supabase.':'Erro ao baixar/converter arquivo.');}
+  }catch(e){showToast(isBucketError(e)?'Bucket arquivos não encontrado no Supabase.':'Erro ao baixar/converter arquivo.');}
 }
 function selectedFiles(){
   const ids=[...document.querySelectorAll('.file-check:checked')].map(i=>i.value);
